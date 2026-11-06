@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b0d10">
+<title>Changed-special</title>
+<link rel="manifest" href="manifest.webmanifest">
+<style>
+  :root {
+    --bg: #0b0d10;
+    --panel: #15181d;
+    --panel-2: #1d2128;
+    --line: #2a2f38;
+    --text: #e8eaed;
+    --muted: #9aa0a8;
+    --accent: #7fd1c7;
+    --danger: #ff8a80;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg); color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+    overflow: hidden; overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #stage {
+    position: fixed; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #canvas {
+    display: block; background: #000;
+    width: 100%; height: auto;
+    max-width: 100vw; max-height: 100vh;
+    aspect-ratio: 544 / 416;
+    outline: none;
+    image-rendering: auto;
+  }
+  body.pixel #canvas { image-rendering: pixelated; }
+  @media (min-aspect-ratio: 544/416) { #canvas { width: auto; height: 100%; } }
+
+  /* Start / loading overlay */
+  #gate {
+    position: fixed; inset: 0; z-index: 20;
+    display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 18px;
+    background: radial-gradient(ellipse at 50% 40%, #182027 0%, var(--bg) 70%);
+    cursor: pointer; user-select: none; text-align: center; padding: 24px;
+  }
+  #gate h1 { margin: 0; font-size: 28px; font-weight: 600; letter-spacing: .02em; }
+  #gate .sub { color: var(--muted); max-width: 420px; }
+  #gate .play {
+    border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
+    padding: 12px 28px; border-radius: 999px; font-size: 16px; font-weight: 600;
+  }
+  #gate.loading { cursor: default; }
+  #gate .bar { width: min(320px, 70vw); height: 4px; border-radius: 4px; background: var(--panel-2); overflow: hidden; display: none; }
+  #gate.loading .bar { display: block; }
+  #gate.loading .play { display: none; }
+  #gate .bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  #gate .status { color: var(--muted); font-size: 13px; min-height: 1.4em; }
+
+  /* Small fetch indicator */
+  #net {
+    position: fixed; left: 10px; bottom: 10px; z-index: 5;
+    font-size: 12px; color: var(--muted); background: rgba(21,24,29,.85);
+    border: 1px solid var(--line); padding: 3px 9px; border-radius: 6px;
+    opacity: 0; transition: opacity .25s; pointer-events: none; max-width: 70vw;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  #net.on { opacity: 1; }
+
+  /* Toolbar */
+  #bar {
+    position: fixed; top: 10px; right: 10px; z-index: 10;
+    display: flex; gap: 6px; opacity: .25; transition: opacity .2s;
+  }
+  #bar:hover, #bar:focus-within, body.touch #bar { opacity: .9; }
+  #bar button {
+    width: 36px; height: 36px; border-radius: 8px;
+    border: 1px solid var(--line); background: rgba(21,24,29,.9); color: var(--text);
+    display: grid; place-items: center; cursor: pointer; padding: 0;
+  }
+  #bar button:hover { background: var(--panel-2); }
+  #bar svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* Panels */
+  .sheet {
+    position: fixed; z-index: 30; inset: 0; display: none;
+    align-items: center; justify-content: center; background: rgba(0,0,0,.55); padding: 16px;
+  }
+  .sheet.open { display: flex; }
+  .card {
+    width: min(460px, 100%); max-height: 90vh; overflow: auto;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px;
+  }
+  .card h2 { margin: 0 0 6px; font-size: 17px; }
+  .card p { margin: 6px 0 12px; color: var(--muted); }
+  .card .row { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+  .card button {
+    border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
+    padding: 8px 14px; border-radius: 8px; cursor: pointer; font: inherit;
+  }
+  .card button.primary { border-color: #3c6b66; background: #1f3533; }
+  .card button:hover { filter: brightness(1.15); }
+  .card table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .card td { padding: 5px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .card td:first-child { color: var(--accent); white-space: nowrap; padding-right: 12px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .card .note { font-size: 12px; color: var(--muted); }
+  .card label.check { display: flex; gap: 8px; align-items: center; color: var(--text); margin: 8px 0; cursor: pointer; }
+  #err .card { border-color: #5b2b2b; }
+  #err pre {
+    white-space: pre-wrap; word-break: break-word; background: #0f1114; border: 1px solid var(--line);
+    padding: 10px; border-radius: 8px; font-size: 12px; color: var(--danger); max-height: 40vh; overflow: auto;
+  }
+
+  /* Touch controls */
+  #touch { display: none; }
+  body.touch #touch { display: block; }
+  .pad {
+    position: fixed; z-index: 8; bottom: max(16px, env(safe-area-inset-bottom));
+    touch-action: none; user-select: none;
+  }
+  #dpad { left: max(16px, env(safe-area-inset-left)); width: 150px; height: 150px; }
+  #dpad div, #apad div {
+    position: absolute; background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.18);
+    color: rgba(255,255,255,.75); display: grid; place-items: center; font-weight: 700; font-size: 15px;
+  }
+  #dpad div { width: 50px; height: 50px; border-radius: 10px; }
+  #d-up { left: 50px; top: 0; } #d-down { left: 50px; top: 100px; }
+  #d-left { left: 0; top: 50px; } #d-right { left: 100px; top: 50px; }
+  #apad { right: max(16px, env(safe-area-inset-right)); width: 170px; height: 150px; }
+  #apad div { border-radius: 50%; }
+  #ap-c { width: 64px; height: 64px; right: 0; top: 30px; }
+  #ap-b { width: 56px; height: 56px; right: 78px; top: 84px; }
+  #ap-a { width: 44px; height: 44px; right: 86px; top: 6px; font-size: 12px; }
+  #ap-ctrl { width: 44px; height: 44px; right: 10px; top: 104px; font-size: 11px; }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <canvas id="canvas" width="544" height="416" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+  </div>
+
+  <div id="gate">
+    <h1>Changed-special</h1>
+    <div class="sub">Runs entirely in your browser. Saves are kept in this browser's storage.</div>
+    <div class="play" id="playBtn">Click to play</div>
+    <div class="bar"><i id="barFill"></i></div>
+    <div class="status" id="gateStatus"></div>
+  </div>
+
+  <div id="net"></div>
+
+  <div id="bar">
+    <button id="btnFull" title="Fullscreen" aria-label="Fullscreen">
+      <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+    </button>
+    <button id="btnSaves" title="Saves" aria-label="Saves">
+      <svg viewBox="0 0 24 24"><path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/></svg>
+    </button>
+    <button id="btnHelp" title="Controls &amp; settings" aria-label="Controls and settings">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg>
+    </button>
+  </div>
+
+  <div class="sheet" id="helpSheet">
+    <div class="card">
+      <h2>Controls</h2>
+      <table>
+        <tr><td>Arrow keys</td><td>Move / choose</td></tr>
+        <tr><td>Z · Enter · Space</td><td>Confirm / talk</td></tr>
+        <tr><td>X · Esc</td><td>Cancel / open menu</td></tr>
+        <tr><td>Shift</td><td>Dash</td></tr>
+        <tr><td>Ctrl</td><td>Fast-forward dialogue</td></tr>
+      </table>
+      <h2 style="margin-top:16px">Display</h2>
+      <label class="check"><input type="checkbox" id="optPixel"> Sharp pixels (no smoothing when scaled)</label>
+      <label class="check"><input type="checkbox" id="optTouch"> Show on-screen touch controls</label>
+      <div class="row"><button data-close>Close</button></div>
+    </div>
+  </div>
+
+  <div class="sheet" id="saveSheet">
+    <div class="card">
+      <h2>Saves</h2>
+      <p>The game saves into this browser. Export to keep a backup or move to another device; import <code>SaveN.rvdata</code> files from the desktop game's <code>Saves</code> folder.</p>
+      <div class="row">
+        <button class="primary" id="btnExport">Export browser saves (.zip)</button>
+        <button id="btnImport">Import .rvdata files…</button>
+        <input type="file" id="importInput" accept=".rvdata" multiple hidden>
+      </div>
+      <div class="note" id="saveNote"></div>
+      <div class="row"><button data-close>Close</button></div>
+    </div>
+  </div>
+
+  <div class="sheet" id="err">
+    <div class="card">
+      <h2>The game hit an error</h2>
+      <pre id="errText"></pre>
+      <div class="row"><button class="primary" onclick="location.reload()">Reload</button><button data-close>Dismiss</button></div>
+    </div>
+  </div>
+
+  <div class="sheet" id="exitSheet">
+    <div class="card">
+      <h2>The game has closed</h2>
+      <p>Your saves are kept in this browser.</p>
+      <div class="row"><button class="primary" onclick="location.reload()">Play again</button></div>
+    </div>
+  </div>
+
+  <div id="touch">
+    <div class="pad" id="dpad">
+      <div id="d-up">▲</div><div id="d-left">◀</div><div id="d-right">▶</div><div id="d-down">▼</div>
+    </div>
+    <div class="pad" id="apad">
+      <div id="ap-c">OK</div><div id="ap-b">✕</div><div id="ap-a">Dash</div><div id="ap-ctrl">Skip</div>
+    </div>
+  </div>
+
+  <script src="js/localforage.min.js"></script>
+  <script src="js/drive.js"></script>
+  <script src="js/dpad.js"></script>
+  <script src="gameasync/saves-seed.js"></script>
+  <script src="gameasync/mapping.js"></script>
+  <script>
+    var namespace = 'changed_special/';
+    var wTitle = 'Changed-special';
+
+    // ---------- small helpers ----------
+    const $ = (id) => document.getElementById(id);
+    const prefs = (() => { try { return JSON.parse(localStorage.getItem('cs_prefs') || '{}'); } catch (e) { return {}; } })();
+    const savePrefs = () => { try { localStorage.setItem('cs_prefs', JSON.stringify(prefs)); } catch (e) {} };
+
+    function openSheet(id) { $(id).classList.add('open'); }
+    document.querySelectorAll('.sheet').forEach((s) => {
+      s.addEventListener('click', (e) => { if (e.target === s || e.target.hasAttribute('data-close')) { s.classList.remove('open'); $('canvas').focus(); } });
+    });
+
+    // ---------- display options ----------
+    const touchCapable = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+    if (prefs.pixel) document.body.classList.add('pixel');
+    if (prefs.touch === undefined ? touchCapable : prefs.touch) document.body.classList.add('touch');
+    $('optPixel').checked = !!prefs.pixel;
+    $('optTouch').checked = document.body.classList.contains('touch');
+    $('optPixel').onchange = (e) => { prefs.pixel = e.target.checked; document.body.classList.toggle('pixel', prefs.pixel); savePrefs(); };
+    $('optTouch').onchange = (e) => { prefs.touch = e.target.checked; document.body.classList.toggle('touch', prefs.touch); savePrefs(); };
+
+    $('btnHelp').onclick = () => openSheet('helpSheet');
+    $('btnSaves').onclick = () => { refreshSaveNote(); openSheet('saveSheet'); };
+    $('btnFull').onclick = () => {
+      const el = document.documentElement;
+      if (document.fullscreenElement) document.exitFullscreen();
+      else (el.requestFullscreen || el.webkitRequestFullscreen).call(el).then(() => {
+        try { screen.orientation.lock('landscape'); } catch (e) {}
+      }).catch(() => {});
+    };
+
+    // ---------- network indicator ----------
+    let netTimer = 0;
+    window.updateProgress = function(streams, name, loaded, total) {
+      const el = $('net');
+      if (!streams.length) { clearTimeout(netTimer); netTimer = setTimeout(() => el.classList.remove('on'), 300); return; }
+      clearTimeout(netTimer);
+      const kb = loaded ? ` ${Math.round(loaded / 1024)}${total ? '/' + Math.round(total / 1024) : ''} KB` : '';
+      el.textContent = `Loading ${name || streams[streams.length - 1]}${kb}`;
+      el.classList.add('on');
+    };
+    window.setBusy = () => {};
+    window.setNotBusy = () => {};
+
+    // ---------- error reporting ----------
+    window.onMkxpMessage = function(text) {
+      $('errText').textContent = text;
+      openSheet('err');
+    };
+    window.onMkxpExit = function() {
+      if ($('err').classList.contains('open')) return;
+      $('exitSheet').classList.add('open');
+    };
+
+    // ---------- saves import / export ----------
+    function refreshSaveNote() {
+      listStoredSaves((folder) => {
+        const n = Object.keys(folder).length;
+        const seeds = Object.keys(window.saveSeedTimes || {}).length;
+        $('saveNote').textContent = `${n} save${n === 1 ? '' : 's'} stored in this browser` + (seeds ? ` · ${seeds} bundled with the game` : '') + '.';
+      });
+    }
+
+    const crcTable = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+    function crc32(buf) { let c = 0xFFFFFFFF; for (let i = 0; i < buf.length; i++) c = crcTable[(c ^ buf[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+    function makeZip(files) {
+      const enc = new TextEncoder(); const parts = []; const central = []; let offset = 0;
+      const now = new Date();
+      const dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1);
+      const dosDate = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+      for (const f of files) {
+        const name = enc.encode(f.name), data = f.data, crc = crc32(data);
+        const h = new DataView(new ArrayBuffer(30));
+        h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(8, 0, true);
+        h.setUint16(10, dosTime, true); h.setUint16(12, dosDate, true);
+        h.setUint32(14, crc, true); h.setUint32(18, data.length, true); h.setUint32(22, data.length, true);
+        h.setUint16(26, name.length, true);
+        parts.push(new Uint8Array(h.buffer), name, data);
+        const c = new DataView(new ArrayBuffer(46));
+        c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true);
+        c.setUint16(12, dosTime, true); c.setUint16(14, dosDate, true);
+        c.setUint32(16, crc, true); c.setUint32(20, data.length, true); c.setUint32(24, data.length, true);
+        c.setUint16(28, name.length, true); c.setUint32(42, offset, true);
+        central.push(new Uint8Array(c.buffer), name);
+        offset += 30 + name.length + data.length;
+      }
+      const cdSize = central.reduce((a, b) => a + b.length, 0);
+      const e = new DataView(new ArrayBuffer(22));
+      e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true);
+      e.setUint32(12, cdSize, true); e.setUint32(16, offset, true);
+      return new Blob([...parts, ...central, new Uint8Array(e.buffer)], { type: 'application/zip' });
+    }
+
+    $('btnExport').onclick = () => {
+      listStoredSaves(async (folder) => {
+        const names = Object.keys(folder);
+        if (!names.length) { $('saveNote').textContent = 'No browser saves yet — save in-game first.'; return; }
+        const files = [];
+        for (const n of names) {
+          const data = await localforage.getItem(namespace + n);
+          if (data) files.push({ name: n, data: new Uint8Array(data) });
+        }
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(makeZip(files));
+        a.download = 'changed-special-saves.zip';
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      });
+    };
+
+    $('btnImport').onclick = () => $('importInput').click();
+    $('importInput').onchange = async (e) => {
+      const files = Array.from(e.target.files || []);
+      let ok = 0;
+      for (const f of files) {
+        if (!/^Save\d+\.rvdata$/i.test(f.name)) continue;
+        const name = 'Saves/' + f.name.replace(/^save/i, 'Save');
+        const data = new Uint8Array(await f.arrayBuffer());
+        if (typeof FS !== 'undefined' && FS.analyzePath('/game').exists) {
+          try { FS.mkdirTree('/game/Saves'); } catch (err) {}
+          FS.writeFile('/game/' + name, data);
+          try { const t = f.lastModified || Date.now(); FS.utime('/game/' + name, t, t); } catch (err) {}
+          saveFile(name);
+        } else {
+          await localforage.setItem(namespace + name, data);
+          const folder = (await localforage.getItem(namespace)) || {};
+          folder[name] = { t: f.lastModified || Date.now() };
+          await localforage.setItem(namespace, folder);
+        }
+        ok++;
+      }
+      e.target.value = '';
+      $('saveNote').textContent = ok ? `Imported ${ok} file${ok === 1 ? '' : 's'}. Open the Load screen to use them.` : 'No SaveN.rvdata files were selected.';
+    };
+
+    // ---------- touch controls ----------
+    bindKey('d-up', 38); bindKey('d-right', 39); bindKey('d-down', 40); bindKey('d-left', 37);
+    bindKey('ap-c', 90); bindKey('ap-b', 88); bindKey('ap-a', 16); bindKey('ap-ctrl', 17);
+
+    // While a panel is open, keep keystrokes away from the game
+    window.addEventListener('keydown', (e) => {
+      const open = document.querySelector('.sheet.open');
+      if (!open) return;
+      if (e.key === 'Escape') { open.classList.remove('open'); $('canvas').focus(); }
+      e.stopImmediatePropagation();
+    }, true);
+    window.addEventListener('keyup', (e) => { if (document.querySelector('.sheet.open')) e.stopImmediatePropagation(); }, true);
+
+    // Keep arrow keys / space from scrolling the page
+    window.addEventListener('keydown', (e) => {
+      if ([32, 37, 38, 39, 40].includes(e.keyCode) && !e.target.closest('.card')) e.preventDefault();
+    }, { passive: false });
+
+    // ---------- engine boot ----------
+    const CORE = ['rgss.rb', 'Game.ini', 'Data/Scripts.rvdata', 'Fonts/Unifont.ttf',
+      'Data/Actors.rvdata', 'Data/Classes.rvdata', 'Data/Skills.rvdata', 'Data/Items.rvdata',
+      'Data/Weapons.rvdata', 'Data/Armors.rvdata', 'Data/Enemies.rvdata', 'Data/Troops.rvdata',
+      'Data/States.rvdata', 'Data/Animations.rvdata', 'Data/CommonEvents.rvdata',
+      'Data/System.rvdata', 'Data/Areas.rvdata', 'Data/MapInfos.rvdata'];
+    const coreData = {};
+
+    function fetchWithProgress(url, onProgress) {
+      return fetch(url).then(async (res) => {
+        if (!res.ok) throw new Error(url + ' ' + res.status);
+        const total = Number(res.headers.get('content-length')) || 0;
+        if (!res.body || !total) { const b = await res.arrayBuffer(); onProgress(b.byteLength, b.byteLength); return b; }
+        const reader = res.body.getReader(); const chunks = []; let got = 0;
+        for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); got += value.length; onProgress(got, total); }
+        const out = new Uint8Array(got); let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; }
+        return out.buffer;
+      });
+    }
+
+    function writeCore() {
+      for (const name of CORE) {
+        const key = getMappingKey(name), val = mapping[key];
+        if (!val || !coreData[name]) continue;
+        const path = '/game/' + val.split('?')[0];
+        FS.writeFile(path, new Uint8Array(coreData[name]));
+        window.fileAsyncCache[key] = 1;
+      }
+    }
+
+    function preloadSystem() {
+      preloadList(mappingArray.map((m) => m[0]).filter((k) => /^graphics\/system\//.test(k)));
+    }
+
+    let started = false;
+    async function boot() {
+      if (started) return; started = true;
+      const gate = $('gate');
+      gate.classList.add('loading');
+      const status = $('gateStatus'), fill = $('barFill');
+
+      // Unlock audio on the user gesture
+      try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        const orig = AC.prototype.resume;
+        window.__audioUnlock = () => { (window.__acs || []).forEach((c) => { try { c.resume(); } catch (e) {} }); };
+        const Wrapped = function(...a) { const c = new AC(...a); (window.__acs = window.__acs || []).push(c); return c; };
+        Wrapped.prototype = AC.prototype;
+        window.AudioContext = Wrapped; if (window.webkitAudioContext) window.webkitAudioContext = Wrapped;
+        ['pointerdown', 'keydown', 'touchstart'].forEach((ev) => window.addEventListener(ev, window.__audioUnlock, { passive: true }));
+      } catch (e) {}
+
+      let engineDone = 0, engineTotal = 1, coreDone = 0;
+      const paint = () => {
+        const p = Math.min(1, (engineDone / engineTotal) * 0.75 + (coreDone / CORE.length) * 0.25);
+        fill.style.width = (p * 100).toFixed(1) + '%';
+      };
+
+      status.textContent = 'Downloading game engine…';
+      const wasmP = fetchWithProgress('mkxp.wasm', (d, t) => { engineDone = d; engineTotal = t || d; paint(); });
+      const coreP = Promise.all(CORE.map((name) => {
+        const val = mapping[getMappingKey(name)];
+        if (!val) return null;
+        return fetch('gameasync/' + val).then((r) => r.ok ? r.arrayBuffer() : null)
+          .then((b) => { coreData[name] = b; coreDone++; paint(); }).catch(() => { coreDone++; });
+      }));
+
+      let wasm;
+      try { [wasm] = await Promise.all([wasmP, coreP]); }
+      catch (e) { status.textContent = 'Download failed — check your connection and reload.'; return; }
+
+      status.textContent = 'Starting…';
+
+      window.Module = {
+        wasmBinary: wasm,
+        preRun: [() => { createDummies(); writeCore(); }],
+        postRun: [() => { loadFiles(); preloadSystem(); }],
+        noAudioDecoding: true,
+        canvas: $('canvas'),
+        print: (t) => console.log(t),
+        printErr: (t) => console.warn(t),
+        setStatus: () => {},
+        onRuntimeInitialized: () => {
+          setTimeout(() => { gate.style.transition = 'opacity .4s'; gate.style.opacity = '0'; setTimeout(() => gate.remove(), 450); }, 300);
+          $('canvas').focus();
+        },
+      };
+      $('canvas').addEventListener('webglcontextlost', (e) => {
+        e.preventDefault();
+        window.onMkxpMessage('The graphics context was lost (the GPU was reset or the tab was backgrounded too long). Reload to continue — your last in-game save is safe.');
+      }, false);
+
+      const s = document.createElement('script');
+      s.src = 'mkxp.js';
+      document.body.appendChild(s);
+    }
+
+    $('gate').addEventListener('click', boot);
+    window.addEventListener('keydown', (e) => { if (!started && (e.key === 'Enter' || e.key === ' ')) boot(); });
+    document.title = wTitle;
+  </script>
+</body>
+</html>
